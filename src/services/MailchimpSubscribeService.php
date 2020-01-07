@@ -17,7 +17,7 @@ use aelvan\mailchimpsubscribe\models\SubscribeResponse;
 use aelvan\mailchimpsubscribe\models\Settings;
 
 use Illuminate\Support\Collection;
-use Mailchimp\Mailchimp;
+use DrewM\MailChimp\MailChimp;;
 
 
 /**
@@ -72,14 +72,14 @@ class MailchimpSubscribeService extends Component
         if (isset($opts['interests']) && $opts['interests'] !== null) {
             $interests = $this->prepInterests($audienceId, $opts['interests']);
         }
-        
+
         // marketing permissions
         $marketingPermissions = [];
-        
+
         if (isset($opts['marketing_permissions']) && $opts['marketing_permissions'] !== null) {
             $marketingPermissions = $this->prepMarketingPermissions($member, $opts['marketing_permissions']);
         }
-        
+
         // Build the post variables
         $postVars = [
             'status_if_new' => $settings->getDoubleOptIn() ? 'pending' : 'subscribed',
@@ -118,7 +118,7 @@ class MailchimpSubscribeService extends Component
 
         // Subscribe
         try {
-            $result = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)), $postVars, 'PUT');
+            $result = $mc->put('lists/' . $audienceId . '/members/' . md5(strtolower($email)), $postVars);
 
             if (isset($result['_links'])) {
                 unset($result['_links']);
@@ -153,7 +153,7 @@ class MailchimpSubscribeService extends Component
         if ($opts['tags'] !== null) {
             try {
                 $tags = $this->prepMemberTags($opts['tags'], $result['tags']);
-                $tagsResult = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)) . '/tags', ['tags' => $tags], 'POST');
+                $tagsResult = $mc->post('lists/' . $audienceId . '/members/' . md5(strtolower($email)) . '/tags', ['tags' => $tags]);
             } catch (\Exception $e) {
                 Craft::error('An error occured when trying to add tags to email `' . $email . '`: ' . print_r($e->getMessage(), true), __METHOD__);
             }
@@ -209,7 +209,7 @@ class MailchimpSubscribeService extends Component
         $mc = $this->getClient();;
 
         try {
-            $result = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)), ['status' => 'unsubscribed'], 'PATCH');
+            $result = $mc->patch('lists/' . $audienceId . '/members/' . md5(strtolower($email)), ['status' => 'unsubscribed']);
 
             if (isset($result['_links'])) {
                 unset($result['_links']);
@@ -294,9 +294,9 @@ class MailchimpSubscribeService extends Component
 
         try {
             if ($permanent) {
-                $result = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)) . '/actions/delete-permanent', [], 'POST');
+                $result = $mc->post('lists/' . $audienceId . '/members/' . md5(strtolower($email)) . '/actions/delete-permanent');
             } else {
-                $result = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)), [], 'DELETE');
+                $result = $mc->delete('lists/' . $audienceId . '/members/' . md5(strtolower($email)));
             }
 
             if (isset($result['_links'])) {
@@ -339,7 +339,7 @@ class MailchimpSubscribeService extends Component
             'values' => ['email' => $email]
         ]);
     }
-    
+
     /**
      * Return member object by email
      *
@@ -371,7 +371,7 @@ class MailchimpSubscribeService extends Component
 
         try {
             /** @var Collection $member */
-            $member = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)));
+            $member = $mc->get('lists/' . $audienceId . '/members/' . md5(strtolower($email)));
 
             if (isset($member['_links'])) {
                 unset($member['_links']);
@@ -408,7 +408,7 @@ class MailchimpSubscribeService extends Component
 
         try {
             /** @var Collection $list */
-            $list = $mc->request('lists/' . $audienceId);
+            $list = $mc->get('lists/' . $audienceId);
 
             if (isset($list['_links'])) {
                 unset($list['_links']);
@@ -478,25 +478,27 @@ class MailchimpSubscribeService extends Component
 
         try {
             /** @var Collection $result */
-            $result = $mc->request('lists/' . $audienceId . '/interest-categories');
+            $result = $mc->get('lists/' . $audienceId . '/interest-categories');
 
             $return = [];
 
             foreach ($result['categories'] as $category) {
                 $categoryData = [];
-                $categoryData['title'] = $category->title;
-                $categoryData['type'] = $category->type;
+                $categoryData['title'] = $category['title'];
+                $categoryData['type'] = $category['type'];
                 $categoryData['interests'] = [];
 
                 /** @var Collection $interestsResult */
-                $interestsResult = $mc->request('lists/' . $audienceId . '/interest-categories/' . $category->id . '/interests');
+                $interestsResult = $mc->get('lists/' . $audienceId . '/interest-categories/' . $category['id'] . '/interests');
 
                 foreach ($interestsResult['interests'] as $interest) {
-                    $interestData = [];
-                    $interestData['id'] = $interest->id;
-                    $interestData['name'] = $interest->name;
+                    if ($interest) {
+                        $interestData = [];
+                        $interestData['id'] = $interest['id'];
+                        $interestData['name'] = $interest['name'];
 
-                    $categoryData['interests'][] = $interestData;
+                        $categoryData['interests'][] = $interestData;
+                    }
                 }
 
                 $return[] = $categoryData;
@@ -510,17 +512,17 @@ class MailchimpSubscribeService extends Component
 
             if (JSON_ERROR_NONE !== json_last_error()) {
                 Craft::error('An error occured when trying to get list interests: ' . $message, __METHOD__);
-                return null;
+                return $message;
             }
 
             Craft::error('An error occured when trying to get list interests: ' . $msg->detail, __METHOD__);
-            return null;
+            return $message;
         }
     }
 
     /**
      * Returns member tags from member by email
-     * 
+     *
      * @param string $email
      * @param string $audienceId
      * @return array|null
@@ -548,7 +550,7 @@ class MailchimpSubscribeService extends Component
 
         try {
             /** @var Collection $result */
-            $result = $mc->request('lists/' . $audienceId . '/members/' . md5(strtolower($email)) . '/tags');
+            $result = $mc->get('lists/' . $audienceId . '/members/' . md5(strtolower($email)) . '/tags');
         } catch (\Exception $e) { // subscriber didn't exist
             $message = $e->getMessage();
             $msg = json_decode($message, false);
@@ -564,7 +566,7 @@ class MailchimpSubscribeService extends Component
 
         return $result['tags'];
     }
-    
+
 
     /**
      * --- Deprecated methods --------------------------------------------------------------------------------------
@@ -581,7 +583,7 @@ class MailchimpSubscribeService extends Component
         Craft::$app->deprecator->log(__METHOD__, 'The `getListInterestGroups` template variable and service method is deprecated. Use `getInterestGroups` instead.');
         return $this->getInterestGroups($listId);
     }
-    
+
     /**
      * Check if email is subscribed to one or more lists.
      *
@@ -657,7 +659,7 @@ class MailchimpSubscribeService extends Component
 
         return $this->getMessage(1000, $email, [], Craft::t('mailchimp-subscribe', 'The email address does not exist on this list'), false);
     }
-    
+
     /**
      * Creates return message object
      *
@@ -684,20 +686,20 @@ class MailchimpSubscribeService extends Component
         ];
     }
 
-    
+
     /**
      * --- Private methods --------------------------------------------------------------------------------------
      */
 
     /**
-     * Creates Mailchimp client
-     * 
-     * @return Mailchimp
+     * Creates MailChimp client
+     *
+     * @return MailChimp
      */
-    private function getClient(): Mailchimp
+    private function getClient(): MailChimp
     {
         $settings = Plugin::$plugin->getSettings();
-        return new Mailchimp(Craft::parseEnv($settings->getApiKey()));
+        return new MailChimp(Craft::parseEnv($settings->getApiKey()));
     }
 
     /**
@@ -746,8 +748,8 @@ class MailchimpSubscribeService extends Component
     {
         $interestGroupsResult = $this->getInterestGroups($audienceId);
         $r = [];
-        
-        // Reset all interests 
+
+        // Reset all interests
         foreach ($interestGroupsResult as $group) {
             if (isset($interests[$group['title']])) {
                 foreach ($group['interests'] as $groupInterest) {
@@ -755,7 +757,7 @@ class MailchimpSubscribeService extends Component
                 }
             }
         }
-        
+
         // add configures interests
         if (is_array($interests)) {
             foreach ($interests as $interestGroup) {
@@ -766,7 +768,7 @@ class MailchimpSubscribeService extends Component
                 }
             }
         }
-        
+
         return $r;
     }
 
@@ -785,18 +787,18 @@ class MailchimpSubscribeService extends Component
         foreach ($memberMarketingPermissions as $memberMarketingPermission) {
             $r[$memberMarketingPermission->marketing_permission_id] = false;
         }
-        
+
         if (is_array($marketingPermissions)) {
             foreach ($marketingPermissions as $marketingPermission) {
                 $r[$marketingPermission] = true;
             }
         }
-        
+
         return $r;
     }
 
     /**
-     * Preps submitted array of tags for sending to member tags endpoint. 
+     * Preps submitted array of tags for sending to member tags endpoint.
      *
      * @param array $tags
      * @param array $memberTags
@@ -806,24 +808,24 @@ class MailchimpSubscribeService extends Component
     {
         $r = [];
         $tagsMap = [];
-        
+
         foreach ($memberTags as $tag) {
             $tagsMap[$tag->name] = 'inactive';
         }
-        
+
         if (is_array($tags)) {
             foreach ($tags as $tag) {
                 $tagsMap[$tag] = 'active';
             }
         }
-        
+
         foreach ($tagsMap as $tag=>$status) {
             $r[] = ['name' => $tag, 'status' => $status];
         }
 
         return $r;
     }
-    
+
     /**
      * Validate an email address.
      * Provide email address (raw input)
